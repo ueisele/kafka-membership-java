@@ -1,18 +1,3 @@
-/*
- * Copyright 2018 Confluent Inc.
- *
- * Licensed under the Confluent Community License (the "License"); you may not use
- * this file except in compliance with the License.  You may obtain a copy of the
- * License at
- *
- * http://www.confluent.io/confluent-community-license
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OF ANY KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations under the License.
- */
-
 package net.uweeisele.kafka.membership;
 
 import org.apache.kafka.clients.consumer.internals.AbstractCoordinator;
@@ -25,9 +10,14 @@ import org.apache.kafka.common.utils.Time;
 
 import java.io.Closeable;
 import java.nio.ByteBuffer;
-import java.util.*;
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Collections.singleton;
 
 final class SimpleLeaderElectionCoordinator extends AbstractCoordinator implements Closeable {
 
@@ -65,7 +55,7 @@ final class SimpleLeaderElectionCoordinator extends AbstractCoordinator implemen
 
   @Override
   public String protocolType() {
-    return "simpleleaderelection";
+    return "net.uweeisele.simpleleaderelection";
   }
 
   public void poll(long timeout) {
@@ -103,12 +93,14 @@ final class SimpleLeaderElectionCoordinator extends AbstractCoordinator implemen
   @Override
   public JoinGroupRequestData.JoinGroupRequestProtocolCollection metadata() {
     return new JoinGroupRequestData.JoinGroupRequestProtocolCollection(
-            Collections.singletonList(new JoinGroupRequestData.JoinGroupRequestProtocol()
+            singleton(new JoinGroupRequestData.JoinGroupRequestProtocol()
                     .setName(SLE_SUBPROTOCOL_V0)).iterator());
   }
 
   @Override
-  protected void onJoinPrepare(int generation, String memberId) {}
+  protected void onJoinPrepare(int generation, String memberId) {
+    listener.onPrepareLeaderElection(memberId, generation);
+  }
 
   @Override
   protected Map<String, ByteBuffer> performAssignment(
@@ -137,6 +129,10 @@ final class SimpleLeaderElectionCoordinator extends AbstractCoordinator implemen
     } else {
       listener.onBecomeFollower(memberId, leaderId, generation);
     }
+  }
+
+  public void close(Duration timeout) {
+    super.close(time.timer(timeout));
   }
 
 }

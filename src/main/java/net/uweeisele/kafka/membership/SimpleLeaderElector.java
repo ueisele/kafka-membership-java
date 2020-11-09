@@ -1,18 +1,3 @@
-/*
- * Copyright 2018 Confluent Inc.
- *
- * Licensed under the Confluent Community License (the "License"); you may not use
- * this file except in compliance with the License.  You may obtain a copy of the
- * License at
- *
- * http://www.confluent.io/confluent-community-license
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OF ANY KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations under the License.
- */
-
 package net.uweeisele.kafka.membership;
 
 import net.uweeisele.kafka.membership.exception.LeaderElectionInitializationException;
@@ -36,6 +21,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -149,7 +135,7 @@ public class SimpleLeaderElector {
               this.client,
               groupId,
               300000, // Default MAX_POLL_INTERVAL_MS_CONFIG
-              10000, // Default SESSION_TIMEOUT_MS_CONFIG)
+              10000, // Default SESSION_TIMEOUT_MS_CONFIG
               3000, // Default HEARTBEAT_INTERVAL_MS_CONFIG
               metrics,
               METRICS_PREFIX,
@@ -203,8 +189,9 @@ public class SimpleLeaderElector {
           coordinator.poll(Integer.MAX_VALUE);
         }
       } catch (WakeupException e) {
-        log.info("Poll thread for coordinator aborted.");
+        log.info("The coordinator poll loop has been aborted");
       } catch (Throwable t) {
+        // TODO: Track state of leader elector: RUNNING, REBALANCING, DEAD, STOPPED, ...
         log.error("Unexpected exception in leader election group processing thread", t);
       }
     });
@@ -213,7 +200,7 @@ public class SimpleLeaderElector {
       throw new LeaderElectionTimeoutException("Timed out waiting for join group to complete");
     }
 
-    log.debug("Leader election group member initialized and joined group");
+    log.debug("Group member initialized and joined group");
   }
 
   public void close() {
@@ -248,7 +235,7 @@ public class SimpleLeaderElector {
     // Do final cleanup
     AtomicReference<Throwable> firstException = new AtomicReference<Throwable>();
     this.stopped.set(true);
-    closeQuietly(coordinator, "coordinator", firstException);
+    closeQuietly(() -> coordinator.close(Duration.ofSeconds(10)), "coordinator", firstException);
     closeQuietly(metrics, "consumer metrics", firstException);
     closeQuietly(client, "consumer network client", firstException);
     AppInfoParser.unregisterAppInfo(METRICS_PREFIX, clientId, metrics);
