@@ -17,7 +17,6 @@ import org.apache.kafka.common.utils.AppInfoParser;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.time.Duration;
@@ -32,13 +31,13 @@ import static java.lang.String.format;
 
 public class SimpleLeaderElector {
 
-  private static final Logger LOG = LoggerFactory.getLogger(SimpleLeaderElector.class);
-  private static final String LOG_PATTERN = "[ElectionGroup=\"%s\", Generation=%d, LocalMemberId=\"%s\"] %s";
-
   private static final AtomicInteger SLE_CLIENT_ID_SEQUENCE = new AtomicInteger(1);
   private static final String METRICS_PREFIX = "kafka.simple.leader.election";
 
+  private final Logger log;
+
   private final String clientId;
+  private final String groupId;
   private final ConsumerNetworkClient client;
   private final Metrics metrics;
   private final SimpleLeaderElectionCoordinator coordinator;
@@ -65,7 +64,10 @@ public class SimpleLeaderElector {
 
   public SimpleLeaderElector(SimpleLeaderElectorConfig clientConfig) throws LeaderElectionInitializationException {
     try {
-      clientId = "sle-" + SLE_CLIENT_ID_SEQUENCE.getAndIncrement();
+      this.clientId = "sle-" + SLE_CLIENT_ID_SEQUENCE.getAndIncrement();
+      this.groupId = clientConfig.getString(SimpleLeaderElectorConfig.GROUP_ID_CONFIG);
+      LogContext logContext = new LogContext(format("[Leader election groupId=\"%s\", clientId=\"%s\"] ", groupId, clientId));
+      this.log = logContext.logger(SimpleLeaderElector.class);
 
       Map<String, String> metricsTags = new LinkedHashMap<>();
       metricsTags.put("client-id", clientId);
@@ -85,9 +87,6 @@ public class SimpleLeaderElector {
 
       this.metrics = new Metrics(metricConfig, reporters, time);
       long retryBackoffMs = clientConfig.getLong(CommonClientConfigs.RETRY_BACKOFF_MS_CONFIG);
-      String groupId = clientConfig.getString(SimpleLeaderElectorConfig.GROUP_ID_CONFIG);
-      LogContext logContext = new LogContext("[Simple leader election clientId=" + clientId + ", groupId="
-          + groupId + "] ");
       Metadata metadata = new Metadata(
               retryBackoffMs,
               clientConfig.getLong(CommonClientConfigs.METADATA_MAX_AGE_CONFIG),
@@ -99,8 +98,6 @@ public class SimpleLeaderElector {
       List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(bootstrapServers,
           clientConfig.getString(CommonClientConfigs.CLIENT_DNS_LOOKUP_CONFIG));
       metadata.bootstrap(addresses, time.milliseconds());
-
-      this.tracker = new ElectionGroupGenerationTracker(groupId);
 
       ChannelBuilder channelBuilder = ClientUtils.createChannelBuilder(clientConfig, time);
       long maxIdleMs = clientConfig.getLong(CommonClientConfigs.CONNECTIONS_MAX_IDLE_MS_CONFIG);
@@ -144,11 +141,13 @@ public class SimpleLeaderElector {
               retryBackoffMs,
               new LeaderElectionNotifier()
       );
+
+      this.tracker = new ElectionGroupGenerationTracker(groupId);
       this.leaderElectionListeners.add(tracker);
 
       AppInfoParser.registerAppInfo(METRICS_PREFIX, clientId, metrics, time.milliseconds());
 
-      LOG.debug("Simple leader election group member created");
+      log.debug("Simple leader election group member created");
     } catch (Throwable t) {
       // call close methods if internal objects are already constructed
       // this is to prevent resource leak. see KAFKA-2121
@@ -173,7 +172,7 @@ public class SimpleLeaderElector {
   }
 
   public SimpleLeaderElector joinElection() {
-    LOG.debug("Initializing leader election group member");
+    log.debug("Initializing leader election group member");
 
     executor = Executors.newSingleThreadExecutor();
     executor.submit(() -> {
@@ -182,20 +181,24 @@ public class SimpleLeaderElector {
           coordinator.poll(Integer.MAX_VALUE);
         }
       } catch (WakeupException e) {
-        LOG.info(logMessage("The coordinator poll loop has been stopped"));
+        log.info("The coordinator poll loop has been stopped");
       } catch (Throwable t) {
         // TODO: Track state of leader elector: RUNNING, REBALANCING, DEAD, STOPPED, ...
         // TODO: Track member state: LEADER, FOLLOWER, NONE
-        LOG.error(logMessage("Unexpected exception in leader election group processing thread"), t);
+        log.error("Unexpected exception in leader election group processing thread", t);
       }
     });
 
-    LOG.debug("Group member initialized and joined group");
+    log.debug("Group member initialized and joined group");
 
     return this;
   }
 
-  public ElectionGroupGeneration getElectionGroupGeneration() {
+  public String getGroupId() {
+    return groupId;
+  }
+
+  public ElectionGroupGeneration getElectionGroup() {
     return tracker.getElectionGroup();
   }
 
@@ -215,7 +218,7 @@ public class SimpleLeaderElector {
   }
 
   private void stop(boolean swallowException) {
-    LOG.trace("Stopping the leader election group member.");
+    log.trace("Stopping the leader election group member.");
 
     // Interrupt any outstanding poll calls
     if (client != null) {
@@ -249,11 +252,11 @@ public class SimpleLeaderElector {
           firstException.get()
       );
     } else {
-      LOG.debug("The leader election group member has stopped.");
+      log.debug("The leader election group member has stopped.");
     }
   }
 
-  private static void closeQuietly(AutoCloseable closeable,
+  private void closeQuietly(AutoCloseable closeable,
                                    String name,
                                    AtomicReference<Throwable> firstException
   ) {
@@ -262,17 +265,9 @@ public class SimpleLeaderElector {
         closeable.close();
       } catch (Throwable t) {
         firstException.compareAndSet(null, t);
-        LOG.error("Failed to close {} with type {}", name, closeable.getClass().getName(), t);
+        log.error("Failed to close {} with type {}", name, closeable.getClass().getName(), t);
       }
     }
-  }
-
-  private String logMessage(String message) {
-    return format(LOG_PATTERN,
-            tracker.getElectionGroup().getGroupId(),
-            tracker.getElectionGroup().getGeneration(),
-            tracker.getElectionGroup().getLocalMemberId(),
-            message);
   }
 
   private class LeaderElectionNotifier implements SimpleLeaderElectionListener {
@@ -297,7 +292,7 @@ public class SimpleLeaderElector {
     }
   }
 
-  private static class ElectionGroupGenerationTracker implements SimpleLeaderElectionListener {
+  private class ElectionGroupGenerationTracker implements SimpleLeaderElectionListener {
 
     ElectionGroupGeneration electionGroupGeneration;
 
@@ -310,7 +305,7 @@ public class SimpleLeaderElector {
 
     @Override
     public void onPrepareElectionGroupJoin(String groupId, String localMemberId, int generation) {
-      LOG.info(format(LOG_PATTERN, groupId, generation, localMemberId, "Prepare election group (re-)join"));
+      log.info(format("{localMemberId=\"%s\", generation=%d} Prepare election group (re-)join", localMemberId, generation));
     }
 
     @Override
@@ -321,13 +316,13 @@ public class SimpleLeaderElector {
 
     @Override
     public void onBecomeLeader(String groupId, String localMemberId, int generation) {
-      LOG.info(format(LOG_PATTERN, groupId, generation, localMemberId, "Became leader"));
+      log.info(format("{localMemberId=\"%s\", generation=%d} Became leader", localMemberId, generation));
       leaderLatch.countDown();
     }
 
     @Override
     public void onBecomeFollower(String groupId, String localMemberId, String leaderId, int generation) {
-      LOG.info(format(LOG_PATTERN, groupId, generation, localMemberId, format("Became follower of leader %s", leaderId)));
+      log.info(format("{localMemberId=\"%s\", generation=%d} Became follower of leader \"%s\"", leaderId, generation, leaderId));
     }
 
     ElectionGroupGeneration getElectionGroup() {

@@ -4,6 +4,8 @@ import net.uweeisele.kafka.membership.exception.LeaderElectionInitializationExce
 import net.uweeisele.kafka.membership.exception.LeaderElectionInterruptedException;
 import net.uweeisele.kafka.membership.exception.LeaderElectionTimeoutException;
 import org.apache.commons.lang3.tuple.MutablePair;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -13,6 +15,8 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 
 public class DistributedLock implements Lock {
+
+    private final Logger LOG = LoggerFactory.getLogger(DistributedLock.class);
 
     private final Map<String, ?> configs;
     private final LeaderElectorBuilder leaderElectorBuilder;
@@ -67,6 +71,7 @@ public class DistributedLock implements Lock {
         MutablePair<SimpleLeaderElector, AtomicInteger> lockEntry = leaderElectors.get();
         if (lockEntry.getLeft() == null) {
             SimpleLeaderElector leaderElector = leaderElectorBuilder.buildLeaderElector(configs);
+            LOG.info("Trying to acquire lock for election group \"{}\"", leaderElector.getGroupId());
             try {
                 long startTime = System.currentTimeMillis();
                 leaderElector.joinElection();
@@ -78,12 +83,14 @@ public class DistributedLock implements Lock {
                     throw new LeaderElectionTimeoutException("Timed out waiting for acquiring lock to complete");
                 }
             } catch (final Throwable e) {
+                LOG.info("Failed to acquire lock for election group \"{}\": {}", leaderElector.getGroupId(), e.getMessage());
                 leaderElector.close();
                 throw e;
             }
             lockEntry.setLeft(leaderElector);
         }
         lockEntry.getRight().incrementAndGet();
+        LOG.info("Acquired lock for election group \"{}\"", lockEntry.getLeft().getGroupId());
     }
 
     @Override
@@ -95,6 +102,7 @@ public class DistributedLock implements Lock {
         if (lockEntry.getRight().decrementAndGet() <= 0) {
             lockEntry.getLeft().close();
             leaderElectors.remove();
+            LOG.info("Released lock for election group \"{}\"", lockEntry.getLeft().getGroupId());
         }
     }
 
