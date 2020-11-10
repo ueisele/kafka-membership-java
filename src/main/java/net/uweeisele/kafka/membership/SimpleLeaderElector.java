@@ -1,7 +1,6 @@
 package net.uweeisele.kafka.membership;
 
 import net.uweeisele.kafka.membership.exception.LeaderElectionInitializationException;
-import net.uweeisele.kafka.membership.exception.LeaderElectionTimeoutException;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.kafka.clients.*;
 import org.apache.kafka.clients.consumer.internals.ConsumerNetworkClient;
@@ -23,18 +22,18 @@ import org.slf4j.LoggerFactory;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
+import static java.lang.String.format;
+
 public class SimpleLeaderElector {
 
-  private static final Logger log = LoggerFactory.getLogger(SimpleLeaderElector.class);
+  private static final Logger LOG = LoggerFactory.getLogger(SimpleLeaderElector.class);
+  private static final String LOG_PATTERN = "[ElectionGroup=\"%s\", Generation=%d, LocalMemberId=\"%s\"] %s";
 
   private static final AtomicInteger SLE_CLIENT_ID_SEQUENCE = new AtomicInteger(1);
   private static final String METRICS_PREFIX = "kafka.simple.leader.election";
@@ -44,9 +43,9 @@ public class SimpleLeaderElector {
   private final Metrics metrics;
   private final SimpleLeaderElectionCoordinator coordinator;
 
-  private final List<SimpleLeaderElectionListener> leaderElectionListeners = new ArrayList<>();
+  private final List<SimpleLeaderElectionListener> leaderElectionListeners = new CopyOnWriteArrayList<>();
+  private final ElectionGroupGenerationTracker tracker;
   private final AtomicBoolean stopped = new AtomicBoolean(false);
-  private final CountDownLatch joinedLatch = new CountDownLatch(1);
   private ExecutorService executor;
 
   public SimpleLeaderElector(String bootstrapServer, String groupId) throws LeaderElectionInitializationException {
@@ -101,6 +100,8 @@ public class SimpleLeaderElector {
           clientConfig.getString(CommonClientConfigs.CLIENT_DNS_LOOKUP_CONFIG));
       metadata.bootstrap(addresses, time.milliseconds());
 
+      this.tracker = new ElectionGroupGenerationTracker(groupId);
+
       ChannelBuilder channelBuilder = ClientUtils.createChannelBuilder(clientConfig, time);
       long maxIdleMs = clientConfig.getLong(CommonClientConfigs.CONNECTIONS_MAX_IDLE_MS_CONFIG);
 
@@ -141,28 +142,13 @@ public class SimpleLeaderElector {
               METRICS_PREFIX,
               time,
               retryBackoffMs,
-              new SimpleLeaderElectionListener() {
-                @Override
-                public void onLeaderElected(String memberId, String leaderId, int generation) {
-                  joinedLatch.countDown();
-                  leaderElectionListeners.forEach(l -> l.onLeaderElected(memberId, leaderId, generation));
-                }
-
-                @Override
-                public void onBecomeLeader(String memberId, int generation) {
-                  leaderElectionListeners.forEach(l -> l.onBecomeLeader(memberId, generation));
-                }
-
-                @Override
-                public void onBecomeFollower(String memberId, String leaderId, int generation) {
-                  leaderElectionListeners.forEach(l -> l.onBecomeFollower(memberId, leaderId, generation));
-                }
-              }
+              new LeaderElectionNotifier()
       );
+      this.leaderElectionListeners.add(tracker);
 
       AppInfoParser.registerAppInfo(METRICS_PREFIX, clientId, metrics, time.milliseconds());
 
-      log.debug("Simple leader election group member created");
+      LOG.debug("Simple leader election group member created");
     } catch (Throwable t) {
       // call close methods if internal objects are already constructed
       // this is to prevent resource leak. see KAFKA-2121
@@ -179,8 +165,15 @@ public class SimpleLeaderElector {
     return this;
   }
 
-  public void init(long timeout, TimeUnit timeUnit) throws LeaderElectionTimeoutException, InterruptedException {
-    log.debug("Initializing leader election group member");
+  public SimpleLeaderElector removeLeaderElectionListener(SimpleLeaderElectionListener leaderElectionListener) {
+    if (leaderElectionListener != null) {
+      leaderElectionListeners.remove(leaderElectionListener);
+    }
+    return this;
+  }
+
+  public SimpleLeaderElector joinElection() {
+    LOG.debug("Initializing leader election group member");
 
     executor = Executors.newSingleThreadExecutor();
     executor.submit(() -> {
@@ -189,18 +182,29 @@ public class SimpleLeaderElector {
           coordinator.poll(Integer.MAX_VALUE);
         }
       } catch (WakeupException e) {
-        log.info("The coordinator poll loop has been aborted");
+        LOG.info(logMessage("The coordinator poll loop has been stopped"));
       } catch (Throwable t) {
         // TODO: Track state of leader elector: RUNNING, REBALANCING, DEAD, STOPPED, ...
-        log.error("Unexpected exception in leader election group processing thread", t);
+        // TODO: Track member state: LEADER, FOLLOWER, NONE
+        LOG.error(logMessage("Unexpected exception in leader election group processing thread"), t);
       }
     });
 
-    if (!joinedLatch.await(timeout, timeUnit)) {
-      throw new LeaderElectionTimeoutException("Timed out waiting for join group to complete");
-    }
+    LOG.debug("Group member initialized and joined group");
 
-    log.debug("Group member initialized and joined group");
+    return this;
+  }
+
+  public ElectionGroupGeneration getElectionGroupGeneration() {
+    return tracker.getElectionGroup();
+  }
+
+  public Optional<ElectionGroupGeneration> awaitElectionGroupJoined(long timeout, TimeUnit timeUnit) throws InterruptedException {
+    return tracker.awaitElectionGroupJoined(timeout, timeUnit);
+  }
+
+  public Optional<ElectionGroupGeneration> awaitLeadership(long timeout, TimeUnit timeUnit) throws InterruptedException {
+    return tracker.awaitLeadership(timeout, timeUnit);
   }
 
   public void close() {
@@ -211,7 +215,7 @@ public class SimpleLeaderElector {
   }
 
   private void stop(boolean swallowException) {
-    log.trace("Stopping the leader election group member.");
+    LOG.trace("Stopping the leader election group member.");
 
     // Interrupt any outstanding poll calls
     if (client != null) {
@@ -245,7 +249,7 @@ public class SimpleLeaderElector {
           firstException.get()
       );
     } else {
-      log.debug("The leader election group member has stopped.");
+      LOG.debug("The leader election group member has stopped.");
     }
   }
 
@@ -258,8 +262,91 @@ public class SimpleLeaderElector {
         closeable.close();
       } catch (Throwable t) {
         firstException.compareAndSet(null, t);
-        log.error("Failed to close {} with type {}", name, closeable.getClass().getName(), t);
+        LOG.error("Failed to close {} with type {}", name, closeable.getClass().getName(), t);
       }
     }
   }
+
+  private String logMessage(String message) {
+    return format(LOG_PATTERN,
+            tracker.getElectionGroup().getGroupId(),
+            tracker.getElectionGroup().getGeneration(),
+            tracker.getElectionGroup().getLocalMemberId(),
+            message);
+  }
+
+  private class LeaderElectionNotifier implements SimpleLeaderElectionListener {
+    @Override
+    public void onPrepareElectionGroupJoin(String groupId, String localMemberId, int generation) {
+      leaderElectionListeners.forEach(l -> l.onPrepareElectionGroupJoin(groupId, localMemberId, generation));
+    }
+
+    @Override
+    public void onElectionGroupJoined(String groupId, String localMemberId, String leaderId, int generation) {
+      leaderElectionListeners.forEach(l -> l.onElectionGroupJoined(groupId, localMemberId, leaderId, generation));
+    }
+
+    @Override
+    public void onBecomeLeader(String groupId, String localMemberId, int generation) {
+      leaderElectionListeners.forEach(l -> l.onBecomeLeader(groupId, localMemberId, generation));
+    }
+
+    @Override
+    public void onBecomeFollower(String groupId, String localMemberId, String leaderId, int generation) {
+      leaderElectionListeners.forEach(l -> l.onBecomeFollower(groupId, localMemberId, leaderId, generation));
+    }
+  }
+
+  private static class ElectionGroupGenerationTracker implements SimpleLeaderElectionListener {
+
+    ElectionGroupGeneration electionGroupGeneration;
+
+    final CountDownLatch joinedLatch = new CountDownLatch(1);
+    final CountDownLatch leaderLatch = new CountDownLatch(1);
+
+    public ElectionGroupGenerationTracker(String groupId) {
+      this.electionGroupGeneration = new ElectionGroupGeneration(groupId, "", "", -1);
+    }
+
+    @Override
+    public void onPrepareElectionGroupJoin(String groupId, String localMemberId, int generation) {
+      LOG.info(format(LOG_PATTERN, groupId, generation, localMemberId, "Prepare election group (re-)join"));
+    }
+
+    @Override
+    public void onElectionGroupJoined(String groupId, String localMemberId, String leaderId, int generation) {
+      electionGroupGeneration = new ElectionGroupGeneration(groupId, localMemberId, leaderId, generation);
+      joinedLatch.countDown();
+    }
+
+    @Override
+    public void onBecomeLeader(String groupId, String localMemberId, int generation) {
+      LOG.info(format(LOG_PATTERN, groupId, generation, localMemberId, "Became leader"));
+      leaderLatch.countDown();
+    }
+
+    @Override
+    public void onBecomeFollower(String groupId, String localMemberId, String leaderId, int generation) {
+      LOG.info(format(LOG_PATTERN, groupId, generation, localMemberId, format("Became follower of leader %s", leaderId)));
+    }
+
+    ElectionGroupGeneration getElectionGroup() {
+      return electionGroupGeneration;
+    }
+
+    Optional<ElectionGroupGeneration> awaitElectionGroupJoined(long timeout, TimeUnit timeUnit) throws InterruptedException {
+      if (joinedLatch.await(timeout, timeUnit)) {
+        return Optional.of(electionGroupGeneration);
+      }
+      return Optional.empty();
+    }
+
+    Optional<ElectionGroupGeneration> awaitLeadership(long timeout, TimeUnit timeUnit) throws InterruptedException {
+      if (leaderLatch.await(timeout, timeUnit)) {
+        return Optional.of(electionGroupGeneration);
+      }
+      return Optional.empty();
+    }
+  }
+
 }

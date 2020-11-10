@@ -66,19 +66,15 @@ public class DistributedLock implements Lock {
     public void tryAcquireLock(long time, TimeUnit unit) throws LeaderElectionInitializationException, LeaderElectionTimeoutException, InterruptedException {
         MutablePair<SimpleLeaderElector, AtomicInteger> lockEntry = leaderElectors.get();
         if (lockEntry.getLeft() == null) {
-            CountDownLatch joinedLatch = new CountDownLatch(1);
-            SimpleLeaderElector leaderElector = leaderElectorBuilder.buildLeaderElector(configs)
-                    .addLeaderElectionListener(new SimpleLeaderElectionListener() {
-                        @Override
-                        public void onBecomeLeader(String memberId, int generation) {
-                            joinedLatch.countDown();
-                        }
-                    });
+            SimpleLeaderElector leaderElector = leaderElectorBuilder.buildLeaderElector(configs);
             try {
                 long startTime = System.currentTimeMillis();
-                leaderElector.init(time, unit);
+                leaderElector.joinElection();
+                if (leaderElector.awaitElectionGroupJoined(time, unit).isEmpty()) {
+                    throw new LeaderElectionTimeoutException("Timed out waiting for joining the election");
+                }
                 long durationMs = System.currentTimeMillis() - startTime;
-                if (!joinedLatch.await(Math.max(unit.toMillis(time) - durationMs, 0), TimeUnit.MILLISECONDS)) {
+                if (leaderElector.awaitLeadership(Math.max(unit.toMillis(time) - durationMs, 0), TimeUnit.MILLISECONDS).isEmpty()) {
                     throw new LeaderElectionTimeoutException("Timed out waiting for acquiring lock to complete");
                 }
             } catch (final Throwable e) {

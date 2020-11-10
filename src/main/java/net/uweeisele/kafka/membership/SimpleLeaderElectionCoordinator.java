@@ -99,7 +99,7 @@ final class SimpleLeaderElectionCoordinator extends AbstractCoordinator implemen
 
   @Override
   protected void onJoinPrepare(int generation, String memberId) {
-    listener.onPrepareLeaderElection(memberId, generation);
+    listener.onPrepareElectionGroupJoin(groupId, memberId, generation);
   }
 
   @Override
@@ -123,11 +123,11 @@ final class SimpleLeaderElectionCoordinator extends AbstractCoordinator implemen
           ByteBuffer memberAssignment
   ) {
     String leaderId = new String(memberAssignment.array(), UTF_8);
-    listener.onLeaderElected(memberId, leaderId, generation);
+    listener.onElectionGroupJoined(groupId, memberId, leaderId, generation);
     if (memberId.equals(leaderId)) {
-      listener.onBecomeLeader(memberId, generation);
+      listener.onBecomeLeader(groupId, memberId, generation);
     } else {
-      listener.onBecomeFollower(memberId, leaderId, generation);
+      listener.onBecomeFollower(groupId, memberId, leaderId, generation);
     }
   }
 
