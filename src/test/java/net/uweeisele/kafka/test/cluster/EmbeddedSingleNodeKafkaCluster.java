@@ -37,6 +37,8 @@ import scala.collection.JavaConverters;
 import java.io.IOException;
 import java.util.*;
 
+import static java.util.Collections.emptyMap;
+
 /**
  * Runs an in-memory, "embedded" Kafka cluster with 1 ZooKeeper instance and 1 Kafka broker.
  */
@@ -55,7 +57,12 @@ public class EmbeddedSingleNodeKafkaCluster implements BeforeAllCallback, AfterA
    * Creates and starts the cluster.
    */
   public EmbeddedSingleNodeKafkaCluster() {
-    this(new Properties());
+    this(emptyMap());
+  }
+
+  public EmbeddedSingleNodeKafkaCluster(final Map<String, String> brokerConfig) {
+    this.brokerConfig = new Properties();
+    this.brokerConfig.putAll(brokerConfig);
   }
 
   /**
@@ -187,7 +194,7 @@ public class EmbeddedSingleNodeKafkaCluster implements BeforeAllCallback, AfterA
    * @param topic The name of the topic.
    */
   public void createTopic(final String topic) throws InterruptedException {
-    createTopic(topic, 1, (short) 1, Collections.emptyMap());
+    createTopic(topic, 1, (short) 1, emptyMap());
   }
 
   /**
@@ -198,7 +205,7 @@ public class EmbeddedSingleNodeKafkaCluster implements BeforeAllCallback, AfterA
    * @param replication The replication factor for (the partitions of) this topic.
    */
   public void createTopic(final String topic, final int partitions, final short replication) throws InterruptedException {
-    createTopic(topic, partitions, replication, Collections.emptyMap());
+    createTopic(topic, partitions, replication, emptyMap());
   }
 
   /**

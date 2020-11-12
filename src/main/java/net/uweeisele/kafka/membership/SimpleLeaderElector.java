@@ -29,7 +29,7 @@ import java.util.stream.Collectors;
 
 import static java.lang.String.format;
 
-public class SimpleLeaderElector {
+public class SimpleLeaderElector implements AutoCloseable {
 
   private static final AtomicInteger SLE_CLIENT_ID_SEQUENCE = new AtomicInteger(1);
   private static final String METRICS_PREFIX = "kafka.simple.leader.election";
@@ -64,7 +64,7 @@ public class SimpleLeaderElector {
 
   public SimpleLeaderElector(SimpleLeaderElectorConfig clientConfig) throws LeaderElectionInitializationException {
     try {
-      this.clientId = "sle-" + SLE_CLIENT_ID_SEQUENCE.getAndIncrement();
+      this.clientId = clientConfig.getString(CommonClientConfigs.CLIENT_ID_CONFIG) + "-" + SLE_CLIENT_ID_SEQUENCE.getAndIncrement();
       this.groupId = clientConfig.getString(SimpleLeaderElectorConfig.GROUP_ID_CONFIG);
       LogContext logContext = new LogContext(format("[Leader election groupId=\"%s\", clientId=\"%s\"] ", groupId, clientId));
       this.log = logContext.logger(SimpleLeaderElector.class);
@@ -134,7 +134,7 @@ public class SimpleLeaderElector {
               groupId,
               300000, // Default MAX_POLL_INTERVAL_MS_CONFIG
               10000, // Default SESSION_TIMEOUT_MS_CONFIG
-              3000, // Default HEARTBEAT_INTERVAL_MS_CONFIG
+              clientConfig.getInt(SimpleLeaderElectorConfig.HEARTBEAT_INTERVAL_MS_CONFIG),
               metrics,
               METRICS_PREFIX,
               time,
@@ -196,10 +196,6 @@ public class SimpleLeaderElector {
 
   public String getGroupId() {
     return groupId;
-  }
-
-  public ElectionGroupGeneration getElectionGroup() {
-    return tracker.getElectionGroup();
   }
 
   public Optional<ElectionGroupGeneration> awaitElectionGroupJoined(long timeout, TimeUnit timeUnit) throws InterruptedException {
@@ -325,10 +321,6 @@ public class SimpleLeaderElector {
       log.info(format("{localMemberId=\"%s\", generation=%d} Became follower of leader \"%s\"", leaderId, generation, leaderId));
     }
 
-    ElectionGroupGeneration getElectionGroup() {
-      return electionGroupGeneration;
-    }
-
     Optional<ElectionGroupGeneration> awaitElectionGroupJoined(long timeout, TimeUnit timeUnit) throws InterruptedException {
       if (joinedLatch.await(timeout, timeUnit)) {
         return Optional.of(electionGroupGeneration);
@@ -342,6 +334,7 @@ public class SimpleLeaderElector {
       }
       return Optional.empty();
     }
+
   }
 
 }

@@ -4,9 +4,11 @@ ext {
 }
 
 versions += [
+  collections4: "4.4",
   commons_lang: "3.11",
   confluent: "5.3.4",
   curator: "4.2.0",
+  guava: "30.0-jre",
   hamcrest: "2.2",
   jackson: "2.11.3",
   junit: "5.7.0",
@@ -15,17 +17,19 @@ versions += [
 ]
 
 libs += [
-  commons_lang: "org.apache.commons:commons-lang3:$versions.commons_lang",
+  collections4: "org.apache.commons:commons-collections4:${versions.collections4}",
+  commons_lang: "org.apache.commons:commons-lang3:${versions.commons_lang}",
   curator_test: "org.apache.curator:curator-test:${versions.curator}",
-  hamcrest: "org.hamcrest:hamcrest:$versions.hamcrest",
-  jacksonDatabind: "com.fasterxml.jackson.core:jackson-databind:$versions.jackson",
-  jacksonJDK8Datatypes: "com.fasterxml.jackson.datatype:jackson-datatype-jdk8:$versions.jackson",
-  junit: "org.junit.jupiter:junit-jupiter-engine:$versions.junit",
+  guava: "com.google.guava:guava:${versions.guava}",
+  hamcrest: "org.hamcrest:hamcrest:${versions.hamcrest}",
+  jacksonDatabind: "com.fasterxml.jackson.core:jackson-databind:${versions.jackson}",
+  jacksonJDK8Datatypes: "com.fasterxml.jackson.datatype:jackson-datatype-jdk8:${versions.jackson}",
+  junit: "org.junit.jupiter:junit-jupiter-engine:${versions.junit}",
   kafka: "org.apache.kafka:kafka_2.12:${versions.confluent}-ccs",
   kafka_test: "org.apache.kafka:kafka_2.12:${versions.confluent}-ccs:test",
   kafkaClients: "org.apache.kafka:kafka-clients:${versions.confluent}-ccs",
   kafkaClients_test: "org.apache.kafka:kafka-clients:${versions.confluent}-ccs:test", 
-  log4j: "log4j:log4j:$versions.log4j",
-  slf4jApi: "org.slf4j:slf4j-api:$versions.slf4j",
-  slf4jlog4j: "org.slf4j:slf4j-log4j12:$versions.slf4j",
+  log4j: "log4j:log4j:${versions.log4j}",
+  slf4jApi: "org.slf4j:slf4j-api:${versions.slf4j}",
+  slf4jlog4j: "org.slf4j:slf4j-log4j12:${versions.slf4j}",
 ]

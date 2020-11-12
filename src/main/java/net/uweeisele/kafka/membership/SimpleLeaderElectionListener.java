@@ -1,6 +1,6 @@
 package net.uweeisele.kafka.membership;
 
-interface SimpleLeaderElectionListener {
+public interface SimpleLeaderElectionListener {
 
   /**
    * Invoked prior to each leader election. The election is sticky,

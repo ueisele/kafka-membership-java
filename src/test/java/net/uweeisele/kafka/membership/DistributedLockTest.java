@@ -26,7 +26,7 @@ public class DistributedLockTest {
     }
 
     @Test
-    public void testLock() throws InterruptedException, ExecutionException {
+    public void testLock() throws InterruptedException {
         Thread t1 = new Thread(() -> {
             System.out.println("T1: Trying to lock");
             distributedLock.lock();

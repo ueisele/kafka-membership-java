@@ -54,6 +54,7 @@ dependencies {
     implementation libs.kafkaClients
 
     testImplementation libs.curator_test
+    testImplementation libs.guava
     testImplementation libs.kafka
     testImplementation libs.kafka_test
     testImplementation libs.kafkaClients_test

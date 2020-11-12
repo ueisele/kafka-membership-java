@@ -24,6 +24,17 @@ class SimpleLeaderElectorConfig extends AbstractConfig {
   public static final String GROUP_ID_CONFIG = "group.id";
   private static final String GROUP_ID_DOC = "A unique string that identifies the member group this member belongs to.";
 
+  /**
+   * <code>"heartbeat.interval.ms</code>
+   */
+  public static final String HEARTBEAT_INTERVAL_MS_CONFIG = "heartbeat.interval.ms";
+  private static final String HEARTBEAT_INTERVAL_MS_DOC = "The expected time between heartbeats to the group " +
+          "coordinator. Heartbeats are used to ensure that the session stays active and to facilitate rebalancing " +
+          "when new consumers join or leave the group. The value must be set lower than <code>session.timeout.ms</code>, " +
+          "but typically should be set no higher than 1/3 of that value. It can be adjusted even lower to control " +
+          "the expected time for normal rebalances.";
+
+  public static final int HEARTBEAT_INTERVAL_MS_DEFAULT = 3 * 1000;
   public static final long METADATA_MAX_AGE_DEFAULT = 5 * 60 * 1000;
   public static final int SEND_BUFFER_DEFAULT = 128 * 1024;
   public static final int RECEIVE_BUFFER_DEFAULT = 64 * 1024;
@@ -32,6 +43,7 @@ class SimpleLeaderElectorConfig extends AbstractConfig {
   public static final long RETRY_BACKOFF_MS_DEFAULT = 100L;
   public static final int REQUEST_TIMEOUT_MS_DEFAULT = 305000;
   public static final long CONNECTIONS_MAX_IDLE_MS_DEFAULT = 9 * 60 * 1000;
+  public static final String CLIENT_ID_DEFAULT = "sle";
 
   static {
     CONFIG = new ConfigDef()
@@ -55,6 +67,18 @@ class SimpleLeaderElectorConfig extends AbstractConfig {
                 new ConfigDef.NonEmptyString(),
                 ConfigDef.Importance.HIGH,
                 GROUP_ID_DOC)
+        .define(CommonClientConfigs.CLIENT_ID_CONFIG,
+                ConfigDef.Type.STRING,
+                CLIENT_ID_DEFAULT,
+                new ConfigDef.NonEmptyString(),
+                ConfigDef.Importance.LOW,
+                CommonClientConfigs.CLIENT_ID_DOC)
+        .define(HEARTBEAT_INTERVAL_MS_CONFIG,
+                ConfigDef.Type.INT,
+                HEARTBEAT_INTERVAL_MS_DEFAULT,
+                atLeast(1),
+                ConfigDef.Importance.LOW,
+                HEARTBEAT_INTERVAL_MS_DOC)
         .define(CommonClientConfigs.METADATA_MAX_AGE_CONFIG,
                 ConfigDef.Type.LONG,
                 METADATA_MAX_AGE_DEFAULT,

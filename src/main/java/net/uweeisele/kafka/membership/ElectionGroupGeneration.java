@@ -1,6 +1,7 @@
 package net.uweeisele.kafka.membership;
 
 import java.util.Objects;
+import java.util.StringJoiner;
 
 import static java.util.Objects.requireNonNull;
 
@@ -60,5 +61,15 @@ public class ElectionGroupGeneration {
     @Override
     public int hashCode() {
         return Objects.hash(groupId, localMemberId, leaderId, generation);
+    }
+
+    @Override
+    public String toString() {
+        return new StringJoiner(", ", ElectionGroupGeneration.class.getSimpleName() + "[", "]")
+                .add("groupId='" + groupId + "'")
+                .add("localMemberId='" + localMemberId + "'")
+                .add("leaderId='" + leaderId + "'")
+                .add("generation=" + generation)
+                .toString();
     }
 }
