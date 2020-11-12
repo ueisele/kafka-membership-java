@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import scala.concurrent.impl.ExecutionContextImpl;
 
 import java.time.Duration;
 import java.util.Map;
@@ -21,6 +20,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.core.Is.is;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DistributedLockIntegrationTest {
 
@@ -36,31 +39,39 @@ class DistributedLockIntegrationTest {
             .put("group.initial.rebalance.delay.ms", "0")
             .build());
 
-    static final DistributedLockBuilder DISTRIBUTED_LOCK_BUILDER = new DistributedLockBuilder(distributedLockConfigs(), leaderElectorBuilder());
-    static ConcurrentMap<Thread, Pair<SimpleLeaderElector, SimpleLeaderElectionEventCollector>> ELECTORS = new ConcurrentHashMap<>();
-    static ConcurrentMap<String, Pair<Thread, ExecutorService>> EXECUTORS = new ConcurrentHashMap<>();
+    final DistributedLockBuilder distributedLockBuilder = new DistributedLockBuilder(distributedLockConfigs(), leaderElectorBuilder());
+    ConcurrentMap<Thread, Pair<SimpleLeaderElector, SimpleLeaderElectionEventCollector>> electors = new ConcurrentHashMap<>();
+    ConcurrentMap<String, Pair<Thread, ExecutorService>> executors = new ConcurrentHashMap<>();
 
     @Test
-    void shouldGetLockIfSingleMember() {
+    void shouldGetLockIfSingleMember() throws InterruptedException, TimeoutException {
         String groupId = newGroupId();
-
         DistributedLock lock = distributedLock(groupId);
 
+        assertTrue(lock.tryLock(DEFAULT_TIMEOUT.toMillis(), MILLISECONDS));
+        collector(Thread.currentThread()).poll(gen -> {
+            assertTrue(gen.isLeader());
+            assertThat(gen.getGeneration(), is(1));
+        });
+
+        lock.unlock();
+        assertFalse(lock.isLocked());
+        assertTrue(elector(Thread.currentThread()).isClosed());
     }
 
     static String newGroupId() {
         return "group" + GROUP_COUNTER.incrementAndGet();
     }
 
-    static DistributedLock distributedLock(String groupId) {
-        return DISTRIBUTED_LOCK_BUILDER.distributedLock(groupId);
+    DistributedLock distributedLock(String groupId) {
+        return distributedLockBuilder.distributedLock(groupId);
     }
 
-    static SimpleLeaderElectorBuilder leaderElectorBuilder() {
+    SimpleLeaderElectorBuilder leaderElectorBuilder() {
         return configs -> {
             SimpleLeaderElectionEventCollector collector = new SimpleLeaderElectionEventCollector(DEFAULT_TIMEOUT);
             SimpleLeaderElector elector = new SimpleLeaderElector(configs).addLeaderElectionListener(collector);
-            ELECTORS.put(Thread.currentThread(), ImmutablePair.of(elector, collector));
+            electors.put(Thread.currentThread(), ImmutablePair.of(elector, collector));
             return elector;
         };
     }
@@ -72,12 +83,12 @@ class DistributedLockIntegrationTest {
                 .build();
     }
 
-    static SimpleLeaderElector elector(Thread thread) throws InterruptedException {
-        return getBlocking(ELECTORS, thread, DEFAULT_TIMEOUT).getLeft();
+    SimpleLeaderElector elector(Thread thread) throws InterruptedException {
+        return getBlocking(electors, thread, DEFAULT_TIMEOUT).getLeft();
     }
 
-    static SimpleLeaderElectionEventCollector collector(Thread thread) throws InterruptedException {
-        return getBlocking(ELECTORS, thread, DEFAULT_TIMEOUT).getRight();
+    SimpleLeaderElectionEventCollector collector(Thread thread) throws InterruptedException {
+        return getBlocking(electors, thread, DEFAULT_TIMEOUT).getRight();
 
     }
 
@@ -94,8 +105,8 @@ class DistributedLockIntegrationTest {
         return value;
     }
 
-    static Thread run(String executorName, RunnableWithThrows runnable) {
-        Pair<Thread, ExecutorService> entry = EXECUTORS.get(executorName);
+    Thread run(String executorName, RunnableWithThrows runnable) {
+        Pair<Thread, ExecutorService> entry = executors.get(executorName);
         if (entry == null) {
             ThreadFactory threadFactory = new QueryableThreadFactory(Executors.defaultThreadFactory());
             ExecutorService executorService = Executors.newFixedThreadPool(1, threadFactory);
@@ -109,20 +120,20 @@ class DistributedLockIntegrationTest {
 
     @AfterEach
     void cleanUp() {
-        ELECTORS.forEach((thread, entry) -> entry.getLeft().close());
-        ELECTORS.clear();
-        EXECUTORS.forEach((g, entry) -> {
-            entry.getLeft().interrupt();
+        electors.forEach((thread, entry) -> entry.getLeft().close());
+        electors.clear();
+        executors.forEach((g, entry) -> {
             entry.getRight().shutdownNow();
+            entry.getLeft().interrupt();
             try {
                 if (!entry.getRight().awaitTermination(5, SECONDS)) {
-                    LOG.warn("Could not terminate al running threads.");
+                    LOG.warn("Could not terminate all running threads.");
                 }
             } catch (InterruptedException e) {
                 LOG.warn("Interrupted during test cleanUp.", e);
             }
         });
-        EXECUTORS.clear();
+        executors.clear();
     }
 
     static class QueryableThreadFactory implements ThreadFactory {
