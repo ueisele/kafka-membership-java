@@ -2,16 +2,16 @@ package net.uweeisele.kafka.membership;
 
 import net.uweeisele.kafka.test.cluster.EmbeddedSingleNodeKafkaCluster;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.ExecutionException;
+@Disabled
+public class DistributedLockExampleTest {
 
-public class DistributedLockTest {
-
-    static final Logger LOG = LoggerFactory.getLogger(DistributedLockTest.class);
+    static final Logger LOG = LoggerFactory.getLogger(DistributedLockExampleTest.class);
 
     @RegisterExtension
     static final EmbeddedSingleNodeKafkaCluster CLUSTER = new EmbeddedSingleNodeKafkaCluster();
