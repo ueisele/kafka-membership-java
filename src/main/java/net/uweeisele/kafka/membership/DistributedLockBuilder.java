@@ -13,18 +13,19 @@ import static java.util.stream.Collectors.toMap;
 public class DistributedLockBuilder {
 
     private final Map<String, ?> defaultConfigs;
+    private final SimpleLeaderElectorBuilder leaderElectorBuilder;
 
     public DistributedLockBuilder(String bootstrapServer) {
         this(mapOfEntries(ImmutablePair.of(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, bootstrapServer)));
     }
 
-    @SafeVarargs
-    private static Map<String,String> mapOfEntries(Map.Entry<String,String>... entries) {
-        return Arrays.stream(entries).collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
+    public DistributedLockBuilder(Map<String, ?> configs) {
+        this(configs, SimpleLeaderElector::new);
     }
 
-    public DistributedLockBuilder(Map<String, ?> configs) {
-        defaultConfigs = new HashMap<>(configs);
+    public DistributedLockBuilder(Map<String, ?> configs, SimpleLeaderElectorBuilder leaderElectorBuilder) {
+        this.defaultConfigs = new HashMap<>(configs);
+        this.leaderElectorBuilder = leaderElectorBuilder;
     }
 
     public DistributedLock distributedLock(String groupId) throws LeaderElectionInitializationException {
@@ -40,6 +41,11 @@ public class DistributedLockBuilder {
     public DistributedLock distributedLock(Map<String, ?> configs) throws LeaderElectionInitializationException {
         Map<String, Object> actualConfigs = new HashMap<>(defaultConfigs);
         actualConfigs.putAll(configs);
-        return new DistributedLock(actualConfigs);
+        return new DistributedLock(actualConfigs, leaderElectorBuilder);
+    }
+
+    @SafeVarargs
+    private static Map<String,String> mapOfEntries(Map.Entry<String,String>... entries) {
+        return Arrays.stream(entries).collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 }

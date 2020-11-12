@@ -206,6 +206,10 @@ public class SimpleLeaderElector implements AutoCloseable {
     return tracker.awaitLeadership(timeout, timeUnit);
   }
 
+  public boolean isClosed() {
+    return stopped.get();
+  }
+
   public void close() {
     if (stopped.get()) {
       return;

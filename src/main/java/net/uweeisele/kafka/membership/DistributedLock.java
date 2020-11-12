@@ -8,18 +8,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
+
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 public class DistributedLock implements Lock {
 
     private final Logger LOG = LoggerFactory.getLogger(DistributedLock.class);
 
     private final Map<String, ?> configs;
-    private final LeaderElectorBuilder leaderElectorBuilder;
+    private final SimpleLeaderElectorBuilder leaderElectorBuilder;
 
     private final ThreadLocal<MutablePair<SimpleLeaderElector, AtomicInteger>> leaderElectors = ThreadLocal.withInitial(() -> MutablePair.of(null, new AtomicInteger(0)));
 
@@ -27,7 +28,7 @@ public class DistributedLock implements Lock {
         this(configs, SimpleLeaderElector::new);
     }
 
-    public DistributedLock(Map<String, ?> configs, LeaderElectorBuilder leaderElectorBuilder) {
+    public DistributedLock(Map<String, ?> configs, SimpleLeaderElectorBuilder leaderElectorBuilder) {
         this.configs = configs;
         this.leaderElectorBuilder = leaderElectorBuilder;
     }
@@ -44,13 +45,13 @@ public class DistributedLock implements Lock {
 
     @Override
     public void lockInterruptibly() throws LeaderElectionInitializationException, LeaderElectionTimeoutException, InterruptedException {
-        tryAcquireLock(Long.MAX_VALUE, TimeUnit.MILLISECONDS);
+        tryAcquireLock(Long.MAX_VALUE, MILLISECONDS);
     }
 
     @Override
     public boolean tryLock() throws LeaderElectionInitializationException {
         try {
-            return tryLock(Long.MAX_VALUE, TimeUnit.MILLISECONDS);
+            return tryLock(Long.MAX_VALUE, MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
@@ -70,24 +71,24 @@ public class DistributedLock implements Lock {
     public void tryAcquireLock(long time, TimeUnit unit) throws LeaderElectionInitializationException, LeaderElectionTimeoutException, InterruptedException {
         MutablePair<SimpleLeaderElector, AtomicInteger> lockEntry = leaderElectors.get();
         if (lockEntry.getLeft() == null) {
-            SimpleLeaderElector leaderElector = leaderElectorBuilder.buildLeaderElector(configs);
-            LOG.info("Trying to acquire lock for election group \"{}\"", leaderElector.getGroupId());
+            SimpleLeaderElector elector = leaderElectorBuilder.build(configs);
+            LOG.info("Trying to acquire lock for election group \"{}\"", elector.getGroupId());
             try {
                 long startTime = System.currentTimeMillis();
-                leaderElector.joinElection();
-                if (leaderElector.awaitElectionGroupJoined(time, unit).isEmpty()) {
+                elector.joinElection();
+                if (elector.awaitElectionGroupJoined(time, unit).isEmpty()) {
                     throw new LeaderElectionTimeoutException("Timed out waiting for joining the election");
                 }
                 long durationMs = System.currentTimeMillis() - startTime;
-                if (leaderElector.awaitLeadership(Math.max(unit.toMillis(time) - durationMs, 0), TimeUnit.MILLISECONDS).isEmpty()) {
+                if (elector.awaitLeadership(Math.max(unit.toMillis(time) - durationMs, 0), MILLISECONDS).isEmpty()) {
                     throw new LeaderElectionTimeoutException("Timed out waiting for acquiring lock to complete");
                 }
             } catch (final Throwable e) {
-                LOG.info("Failed to acquire lock for election group \"{}\": {}", leaderElector.getGroupId(), e.getMessage());
-                leaderElector.close();
+                LOG.info("Failed to acquire lock for election group \"{}\": {}", elector.getGroupId(), e.getMessage());
+                elector.close();
                 throw e;
             }
-            lockEntry.setLeft(leaderElector);
+            lockEntry.setLeft(elector);
         }
         lockEntry.getRight().incrementAndGet();
         LOG.info("Acquired lock for election group \"{}\"", lockEntry.getLeft().getGroupId());
@@ -104,6 +105,10 @@ public class DistributedLock implements Lock {
             leaderElectors.remove();
             LOG.info("Released lock for election group \"{}\"", lockEntry.getLeft().getGroupId());
         }
+    }
+
+    public boolean isLocked() {
+        return leaderElectors.get().getRight().get() > 0;
     }
 
     @Override

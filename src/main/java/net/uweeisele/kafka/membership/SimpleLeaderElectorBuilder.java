@@ -4,6 +4,6 @@ import net.uweeisele.kafka.membership.exception.LeaderElectionInitializationExce
 
 import java.util.Map;
 
-public interface LeaderElectorBuilder {
-    SimpleLeaderElector buildLeaderElector(Map<String, ?> configs) throws LeaderElectionInitializationException;
+public interface SimpleLeaderElectorBuilder {
+    SimpleLeaderElector build(Map<String, ?> configs) throws LeaderElectionInitializationException;
 }

@@ -60,7 +60,7 @@ public class SimpleLeaderElectionEventCollector implements SimpleLeaderElectionL
         do {
             long start = System.currentTimeMillis();
             generation = poll(effectiveTimeout);
-            effectiveTimeout = timeout.minusMillis(System.currentTimeMillis() - start);
+            effectiveTimeout = effectiveTimeout.minusMillis(System.currentTimeMillis() - start);
         } while (generation.getGeneration() < atLeastGen);
         return generation;
     }
