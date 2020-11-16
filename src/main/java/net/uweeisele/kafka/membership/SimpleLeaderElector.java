@@ -322,7 +322,7 @@ public class SimpleLeaderElector implements AutoCloseable {
 
     @Override
     public void onBecomeFollower(String groupId, String localMemberId, String leaderId, int generation) {
-      log.info(format("{localMemberId=\"%s\", generation=%d} Became follower of leader \"%s\"", leaderId, generation, leaderId));
+      log.info(format("{localMemberId=\"%s\", generation=%d} Became follower of leader \"%s\"", localMemberId, generation, leaderId));
     }
 
     Optional<ElectionGroupGeneration> awaitElectionGroupJoined(long timeout, TimeUnit timeUnit) throws InterruptedException {

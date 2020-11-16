@@ -2,8 +2,10 @@ package net.uweeisele.kafka.membership;
 
 import com.google.common.collect.ImmutableMap;
 import net.uweeisele.kafka.test.cluster.EmbeddedSingleNodeKafkaCluster;
-import net.uweeisele.kafka.test.support.RunnableWithThrows;
 import net.uweeisele.kafka.test.support.SimpleLeaderElectionEventCollector;
+import net.uweeisele.kafka.test.support.execution.CompletableFutureExecutorService;
+import net.uweeisele.kafka.test.support.execution.RunnableWithThrows;
+import net.uweeisele.kafka.test.support.execution.WorkerExecutor;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.clients.CommonClientConfigs;
@@ -18,8 +20,8 @@ import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static java.lang.Thread.currentThread;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.Is.is;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -41,7 +43,7 @@ class DistributedLockIntegrationTest {
 
     final DistributedLockBuilder distributedLockBuilder = new DistributedLockBuilder(distributedLockConfigs(), leaderElectorBuilder());
     ConcurrentMap<Thread, Pair<SimpleLeaderElector, SimpleLeaderElectionEventCollector>> electors = new ConcurrentHashMap<>();
-    ConcurrentMap<String, Pair<Thread, ExecutorService>> executors = new ConcurrentHashMap<>();
+    ConcurrentMap<String, Pair<Thread, CompletableFutureExecutorService<?>>> workers = new ConcurrentHashMap<>();
 
     @Test
     void shouldGetLockIfSingleMember() throws InterruptedException, TimeoutException {
@@ -49,14 +51,14 @@ class DistributedLockIntegrationTest {
         DistributedLock lock = distributedLock(groupId);
 
         assertTrue(lock.tryLock(DEFAULT_TIMEOUT.toMillis(), MILLISECONDS));
-        collector(Thread.currentThread()).poll(gen -> {
+        collector(currentThread()).poll(gen -> {
             assertTrue(gen.isLeader());
             assertThat(gen.getGeneration(), is(1));
         });
 
         lock.unlock();
         assertFalse(lock.isLocked());
-        assertTrue(elector(Thread.currentThread()).isClosed());
+        assertTrue(elector(currentThread()).isClosed());
     }
 
     static String newGroupId() {
@@ -71,7 +73,7 @@ class DistributedLockIntegrationTest {
         return configs -> {
             SimpleLeaderElectionEventCollector collector = new SimpleLeaderElectionEventCollector(DEFAULT_TIMEOUT);
             SimpleLeaderElector elector = new SimpleLeaderElector(configs).addLeaderElectionListener(collector);
-            electors.put(Thread.currentThread(), ImmutablePair.of(elector, collector));
+            electors.put(currentThread(), ImmutablePair.of(elector, collector));
             return elector;
         };
     }
@@ -105,49 +107,42 @@ class DistributedLockIntegrationTest {
         return value;
     }
 
-    Thread run(String executorName, RunnableWithThrows runnable) {
-        Pair<Thread, ExecutorService> entry = executors.get(executorName);
-        if (entry == null) {
-            ThreadFactory threadFactory = new QueryableThreadFactory(Executors.defaultThreadFactory());
-            ExecutorService executorService = Executors.newFixedThreadPool(1, threadFactory);
-        }
-        entry.getRight().submit(() -> {
+    CompletableFuture<?> runInThread(String threadName, RunnableWithThrows runnable) {
+        return runInThread(threadName, () -> {
             runnable.run();
             return null;
         });
-        return entry.getLeft();
+    }
+
+    <V> CompletableFuture<V> runInThread(String threadName, Callable<V> runnable) {
+        Pair<Thread, CompletableFutureExecutorService<?>> entry = workers.get(threadName);
+        if (entry == null) {
+            WorkerExecutor worker = new WorkerExecutor();
+            Thread workerThread = new Thread(worker);
+            workerThread.start();
+            CompletableFutureExecutorService<?> executorService = new CompletableFutureExecutorService<>(worker);
+            entry = ImmutablePair.of(workerThread, executorService);
+            workers.put(threadName, entry);
+        }
+        return entry.getRight().submit(runnable);
     }
 
     @AfterEach
     void cleanUp() {
         electors.forEach((thread, entry) -> entry.getLeft().close());
         electors.clear();
-        executors.forEach((g, entry) -> {
+        workers.forEach((g, entry) -> {
             entry.getRight().shutdownNow();
             entry.getLeft().interrupt();
             try {
-                if (!entry.getRight().awaitTermination(5, SECONDS)) {
+                if (!entry.getRight().awaitTermination(Duration.ofSeconds(5))) {
                     LOG.warn("Could not terminate all running threads.");
                 }
             } catch (InterruptedException e) {
                 LOG.warn("Interrupted during test cleanUp.", e);
             }
         });
-        executors.clear();
-    }
-
-    static class QueryableThreadFactory implements ThreadFactory {
-
-        private final ThreadFactory threadFactory;
-
-        public QueryableThreadFactory(ThreadFactory threadFactory) {
-            this.threadFactory = threadFactory;
-        }
-
-        @Override
-        public Thread newThread(Runnable r) {
-            return null;
-        }
+        workers.clear();
     }
 
 }
